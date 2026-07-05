@@ -711,6 +711,7 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     note = f"[File from Telegram] saved at ./incoming/{name}"
     note += f" — {caption}" if caption else " — take a look."
     if await tmuxctl.has_session(agent["tmux_session"]):
+        bridge.note_sent(slug, note)
         await tmuxctl.send_text(agent["tmux_session"], note)
         state.set_status(slug, "BUILDING")
         tail = f"→ {slug}"
@@ -730,6 +731,7 @@ async def _route_to_agent(update, context, slug: str, text: str) -> None:
         state.set_status(slug, "DEAD")
         await _reply(update, f"💀 {slug}'s session is gone. /kill it and /new again.")
         return
+    bridge.note_sent(slug, text)
     await tmuxctl.send_text(agent["tmux_session"], text)
     state.set_status(slug, "BUILDING")
     state.audit("say", text[:200], slug)

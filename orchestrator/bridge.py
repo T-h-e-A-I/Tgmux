@@ -14,6 +14,7 @@ import json
 import logging
 import re
 import time
+from collections import deque
 from typing import Callable, Awaitable
 
 log = logging.getLogger(__name__)
@@ -122,6 +123,31 @@ def _qhash(text: str) -> str:
     return hashlib.sha1(text.encode()).hexdigest()
 
 
+# Echo suppression: the TUI echoes injected input as "> text", and long
+# messages WRAP — continuation lines lack the "> " marker, so the noise
+# filter alone can't catch them. Remember what we typed into each agent
+# and drop any relayed line that is a fragment of a recent send.
+
+_RECENT_SENT: dict[str, deque] = {}
+_ECHO_TTL = 600.0  # seconds a sent message keeps suppressing its echo
+
+
+def note_sent(slug: str, text: str) -> None:
+    q = _RECENT_SENT.setdefault(slug, deque(maxlen=20))
+    q.append((" ".join(text.split()), time.time()))
+
+
+def is_echo(slug: str, line: str) -> bool:
+    frag = " ".join(line.lstrip("> ").split())
+    if len(frag) < 4:  # too short to match meaningfully
+        return False
+    now = time.time()
+    return any(
+        now - ts < _ECHO_TTL and frag in sent
+        for sent, ts in _RECENT_SENT.get(slug, ())
+    )
+
+
 # Baseline = last pane snapshot that was relayed (or accepted as already-seen).
 # Persisted so a daemon /restart doesn't swallow output produced in between.
 
@@ -203,7 +229,7 @@ async def relay_loop(
             continue
 
         # --- pane is stable: diff the snapshot against the last relayed one ---
-        new = [l for l in diff_new_lines(baseline, cur)]
+        new = [l for l in diff_new_lines(baseline, cur) if not is_echo(slug, l)]
         while new and not new[0].strip():
             new.pop(0)
         while new and not new[-1].strip():
