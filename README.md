@@ -64,7 +64,7 @@ Message your bot `/help` — if it answers, the bridge is up.
 | ✨ `/new <name> [api]` | spawn an interactive Claude Code agent (add `api` to bill via `ANTHROPIC_API_KEY` instead of the subscription) |
 | 🔗 `/adopt <name> <path> [tmux-session]` | agent in an existing folder, or bridge an already-running tmux session |
 | 🧟 `/revive <name> [path]` | respawn a killed agent with its previous conversation (`claude --continue`) |
-| 📋 `/list` | agents + status (🛠 building · 🔶 waiting for you · 😴 idle · 💀 dead) |
+| 📋 `/list` | agents + status (🛠 building · 🔶 waiting for you · 😴 idle · 💀 dead) with tap buttons: 🎯 switch · 👀 screen · 🗡 kill |
 | 🎯 `/switch <name>` | route plain text to this agent |
 | 👀 `/status [name]` | current cleaned pane tail |
 | 💬 `/say <name> <msg>` | message a specific agent without switching |
@@ -88,7 +88,7 @@ Routing: plain text → active agent · `@name text` → that agent · replying 
 - Each agent = one tmux session `proj-<slug>` running the interactive `claude` REPL, spawned with `PORT=<allocated>` (pool 3001–3099) and a house-rules `CLAUDE.md` in the project root.
 - Your Telegram text becomes `tmux send-keys`; the daemon polls `capture-pane` every 2 s, cleans the rendered pane (ANSI, TUI chrome, spinners, input-box echoes), diffs it against the last relayed snapshot, and relays only new content — coalesced and throttled so you aren't spammed.
 - The snapshot baseline is persisted per agent, so a daemon restart never swallows or repeats output.
-- Question detection watches the stable pane tail for blocking prompts (`Do you want…`, `(y/n)`, numbered menus). On a hit you get a 🔶 ping and the agent is marked `WAITING_FOR_ME`; replying to that message routes straight back.
+- Question detection watches the stable pane tail for blocking prompts (`Do you want…`, `(y/n)`, numbered menus). On a hit you get a 🔶 ping with quick-answer buttons (1️⃣ 2️⃣ 3️⃣ · ✅ Enter · 🛑 Esc · 👀 Screen) and the agent is marked `WAITING_FOR_ME`; replying to that message also routes straight back.
 - Sessions live in tmux, not the daemon: restart the daemon and it reattaches.
 
 Design note: raw `pipe-pane` streaming isn't relayed because Claude Code is a full-screen TUI — its output stream is redraw noise. The rendered `capture-pane` diff is what you see; `pipe-pane` still runs, feeding raw per-agent audit logs in `logs/`.

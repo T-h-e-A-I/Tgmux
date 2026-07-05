@@ -56,7 +56,7 @@ HELP_TEXT = """\
 ✨ /new &lt;name&gt; [api] — spawn Claude Code agent (api = use API key auth)
 🔗 /adopt &lt;name&gt; &lt;path&gt; [tmux-session] — agent in an existing folder, or bridge a running tmux session
 🧟 /revive &lt;name&gt; [path] — respawn a killed agent with its previous conversation (claude --continue)
-📋 /list — agents + status
+📋 /list — agents + status, with tap buttons (🎯 switch · 👀 screen · 🗡 kill)
 🎯 /switch &lt;name&gt; — set active agent
 👀 /status [name] — what is it doing right now
 💬 /say &lt;name&gt; &lt;msg&gt; — message a specific agent
@@ -163,12 +163,26 @@ async def send_pre(app: Application, header: str, body: str,
             _routes(app)[msg.message_id] = route_slug
 
 
+def _question_kb(slug: str) -> InlineKeyboardMarkup:
+    """Quick-answer buttons for a blocking prompt: tap instead of typing.
+    1/2/3 pick menu options, Enter confirms, Esc backs out, 👀 shows the screen."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("1️⃣", callback_data=f"key:{slug}:1"),
+         InlineKeyboardButton("2️⃣", callback_data=f"key:{slug}:2"),
+         InlineKeyboardButton("3️⃣", callback_data=f"key:{slug}:3")],
+        [InlineKeyboardButton("✅ Enter", callback_data=f"key:{slug}:Enter"),
+         InlineKeyboardButton("🛑 Esc", callback_data=f"key:{slug}:Escape"),
+         InlineKeyboardButton("👀 Screen", callback_data=f"peek:{slug}")],
+    ])
+
+
 async def notify_from_agent(app: Application, slug: str, text: str,
                             is_question: bool) -> None:
     """Bridge callback: agent output / question -> Telegram."""
     header = f"🔶 <b>{html.escape(slug)}</b> needs you:" if is_question \
         else f"🛠 <b>{html.escape(slug)}</b>"
-    await send_pre(app, header, text, route_slug=slug)
+    await send_pre(app, header, text, route_slug=slug,
+                   reply_markup=_question_kb(slug) if is_question else None)
 
 
 def start_relay(app: Application, slug: str) -> None:
@@ -412,7 +426,12 @@ async def cmd_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f" · :{a['dev_port']}"
             + (f" · {a['github_repo']}" if a["github_repo"] else "")
         )
-    await _reply(update, "\n".join(lines))
+    rows = [[
+        InlineKeyboardButton(f"🎯 {a['slug']}", callback_data=f"switch:{a['slug']}"),
+        InlineKeyboardButton("👀", callback_data=f"peek:{a['slug']}"),
+        InlineKeyboardButton("🗡", callback_data=f"killq:{a['slug']}"),
+    ] for a in agents[:10]]
+    await _reply(update, "\n".join(lines), reply_markup=InlineKeyboardMarkup(rows))
 
 
 async def cmd_switch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -639,6 +658,60 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 killed.append(a["slug"])
         await context.application.bot.send_message(
             config.OWNER_ID, f"💀 killed: {', '.join(killed) or 'nothing'}")
+        return
+
+    if data.startswith("key:"):  # quick-answer button on a 🔶 ping
+        _, slug, key = data.split(":", 2)
+        agent = state.get_agent(slug)
+        if not agent or not await tmuxctl.has_session(agent["tmux_session"]):
+            await context.application.bot.send_message(config.OWNER_ID, f"💀 {slug} is gone")
+            return
+        await tmuxctl.send_key(agent["tmux_session"], key)
+        state.set_status(slug, "BUILDING")
+        state.audit("key", key, slug)
+        await context.application.bot.send_message(
+            config.OWNER_ID, f"⌨️ {key} → {slug}", disable_notification=True)
+        return
+
+    if data.startswith("peek:"):
+        slug = data.split(":", 1)[1]
+        agent = state.get_agent(slug)
+        if not agent or not await tmuxctl.has_session(agent["tmux_session"]):
+            await context.application.bot.send_message(config.OWNER_ID, f"💀 {slug} is gone")
+            return
+        raw = await tmuxctl.capture(agent["tmux_session"], lines=80)
+        tail = "\n".join(bridge.clean_pane(raw)[-30:])
+        await send_pre(context.application,
+                       f"📟 <b>{html.escape(slug)}</b> ({agent['status']})",
+                       tail, route_slug=slug)
+        return
+
+    if data.startswith("switch:"):
+        slug = data.split(":", 1)[1]
+        if state.get_agent(slug):
+            state.set_active(slug)
+            await context.application.bot.send_message(
+                config.OWNER_ID, f"🎯 active agent: {slug} — just type to talk to it",
+                disable_notification=True)
+        return
+
+    if data.startswith("killq:"):  # from /list — ask before killing
+        slug = data.split(":", 1)[1]
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton(f"⚠️ Confirm kill {slug}", callback_data=f"do_kill:{slug}"),
+            InlineKeyboardButton("Cancel", callback_data="dismiss"),
+        ]])
+        await q.edit_message_reply_markup(kb)
+        return
+
+    if data.startswith("do_kill:"):
+        slug = data.split(":", 1)[1]
+        await q.edit_message_reply_markup(None)
+        path = await _kill_agent(context.application, slug)
+        await context.application.bot.send_message(
+            config.OWNER_ID,
+            f"💀 {slug} torn down (files kept in {path} — /revive {slug} brings it back)"
+            if path else f"❌ unknown agent {slug}")
         return
 
     if data.startswith("do_merge:"):
