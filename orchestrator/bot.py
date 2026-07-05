@@ -65,7 +65,7 @@ HELP_TEXT = """\
 💀 /killall — tear down ALL agents (confirm button)
 
 <b>🎛 Control</b>
-🔁 /mode [name] — cycle Claude Code mode: normal → accept-edits → plan (Shift+Tab)
+🔁 /mode [name] &lt;normal|auto|plan&gt; — set Claude Code mode directly (bare /mode cycles once)
 🛑 /esc [name] — interrupt the agent (Escape)
 ⌨️ /key &lt;name&gt; &lt;key&gt; — send a raw key (Enter, Up, Down, Tab, 1, C-c …)
 
@@ -522,13 +522,60 @@ async def _agent_for_key(update, context, need_key: bool = False):
     return agent, key
 
 
+MODE_ALIASES = {
+    "normal": "normal", "default": "normal", "no-edit": "normal",
+    "noedit": "normal", "off": "normal",
+    "auto": "auto", "auto-accept": "auto", "accept": "auto", "accept-edits": "auto",
+    "plan": "plan",
+}
+
+
+def _mode_from_pane(raw: str) -> str:
+    """Read the active mode off Claude Code's status line (bottom of pane)."""
+    tail = " ".join(l for l in raw.splitlines() if l.strip())[-400:].lower()
+    if "accept edits on" in tail:
+        return "auto"
+    if "plan mode on" in tail:
+        return "plan"
+    if "bypass permissions on" in tail:
+        return "bypass"
+    return "normal"
+
+
 async def cmd_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/mode [name] [normal|auto|plan] — with a mode: press Shift+Tab until
+    that mode is active; without: cycle once and report where it landed."""
+    args = list(context.args or [])
+    target = None
+    if args and args[-1].lower() in MODE_ALIASES:
+        target = MODE_ALIASES[args.pop().lower()]
+    context.args = args  # leave only the optional agent name for resolution
     agent, _ = await _agent_for_key(update, context)
     if not agent:
         return
-    await tmuxctl.send_key(agent["tmux_session"], "BTab")  # Shift+Tab
-    await _reply(update, f"⇥ {agent['slug']}: cycled mode (normal → accept-edits → plan). "
-                         f"/status to see which is active; /mode again to keep cycling.")
+    sess = agent["tmux_session"]
+
+    cur = _mode_from_pane(await tmuxctl.capture(sess, lines=20))
+    if target is None:  # bare /mode keeps the old cycle-once behavior
+        await tmuxctl.send_key(sess, "BTab")
+        await asyncio.sleep(0.6)
+        cur = _mode_from_pane(await tmuxctl.capture(sess, lines=20))
+        await _reply(update, f"⇥ {agent['slug']}: mode is now {cur} — "
+                             f"/mode auto|plan|normal jumps directly")
+        return
+
+    for _ in range(4):  # cycle is 3-4 long depending on bypass availability
+        if cur == target:
+            break
+        await tmuxctl.send_key(sess, "BTab")
+        await asyncio.sleep(0.6)
+        cur = _mode_from_pane(await tmuxctl.capture(sess, lines=20))
+    if cur == target:
+        await _reply(update, f"✅ {agent['slug']}: mode set to {cur}")
+    else:
+        await _reply(update, f"⚠️ {agent['slug']}: couldn't reach '{target}' "
+                             f"(stuck on {cur}) — a dialog may be open; /esc and retry")
+    state.audit("mode", cur, agent["slug"])
 
 
 async def cmd_esc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

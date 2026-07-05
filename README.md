@@ -69,7 +69,7 @@ Message your bot `/help` — if it answers, the bridge is up.
 | 👀 `/status [name]` | current cleaned pane tail |
 | 💬 `/say <name> <msg>` | message a specific agent without switching |
 | 🔇 `/pause` / 🔊 `/resume <name>` | mute/unmute progress relay (questions always ping) |
-| 🔁 `/mode [name]` | cycle Claude Code mode: normal → accept-edits → plan (Shift+Tab) |
+| 🔁 `/mode [name] <normal\|auto\|plan>` | set Claude Code mode directly — reads the status line and Shift+Tabs until it matches (bare `/mode` cycles once) |
 | 🛑 `/esc [name]` | interrupt the agent (Escape) |
 | ⌨️ `/key <name> <key>` | send a raw key (Enter, Up, Down, Tab, 1, C-c …) |
 | 🌐 `/port <name>` | dev-server URL (`http://VM_IP:port`) |
