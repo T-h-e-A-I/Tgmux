@@ -4,6 +4,7 @@ Auth: every handler is filtered to the owner's numeric user ID; everything
 else is silently dropped (plan §9.1).
 """
 
+import asyncio
 import html
 import logging
 import os
@@ -53,6 +54,7 @@ HELP_TEXT = """\
 <b>🤖 Agents</b>
 ✨ /new &lt;name&gt; [api] — spawn Claude Code agent (api = use API key auth)
 🔗 /adopt &lt;name&gt; &lt;path&gt; [tmux-session] — agent in an existing folder, or bridge a running tmux session
+🧟 /revive &lt;name&gt; [path] — respawn a killed agent with its previous conversation (claude --continue)
 📋 /list — agents + status
 🎯 /switch &lt;name&gt; — set active agent
 👀 /status [name] — what is it doing right now
@@ -217,17 +219,21 @@ async def cmd_mkdir(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _reply(update, f"✅ created {path}")
 
 
-async def _spawn(app: Application, slug: str, path: Path, auth_mode: str) -> str:
-    """Shared by /new and /adopt: tmux session + claude + state + relay."""
+async def _spawn(app: Application, slug: str, path: Path, auth_mode: str,
+                 resume: bool = False, port: int | None = None) -> str:
+    """Shared by /new, /adopt and /revive: tmux session + claude + state + relay.
+    resume=True relaunches with `claude --continue` (previous conversation);
+    port, if given, is reused instead of allocating a fresh one."""
     sess = tmuxctl.session_name(slug)
     if await tmuxctl.has_session(sess):
         state.set_active(slug)
         return f"already running — switched active agent to {slug}"
 
-    try:
-        port = ports.allocate()
-    except RuntimeError as e:
-        return f"❌ {e}"
+    if not port:
+        try:
+            port = ports.allocate()
+        except RuntimeError as e:
+            return f"❌ {e}"
 
     claude_md = path / "CLAUDE.md"
     if not claude_md.exists():
@@ -238,12 +244,25 @@ async def _spawn(app: Application, slug: str, path: Path, auth_mode: str) -> str
     await tmuxctl.pipe_to_log(sess, slug)
 
     extra = {"ANTHROPIC_API_KEY": config.ANTHROPIC_API_KEY} if auth_mode == "api_key" else None
-    await tmuxctl.start_claude(sess, extra)
+    await tmuxctl.start_claude(sess, extra, resume=resume)
 
     state.add_agent(slug, sess, str(path), port, auth_mode)
     state.set_active(slug)
+    if resume:
+        # --continue repaints the old conversation tail; wait for it and
+        # baseline that screen so the relay doesn't resend history.
+        bridge.drop_baseline(slug)
+        await asyncio.sleep(6)
+        bridge.save_baseline(slug, bridge.clean_pane(await tmuxctl.capture(sess)))
     start_relay(app, slug)
-    state.audit("new_agent", f"path={path} port={port} auth={auth_mode}", slug)
+    state.audit("revive_agent" if resume else "new_agent",
+                f"path={path} port={port} auth={auth_mode}", slug)
+    if resume:
+        return (
+            f"🧟 agent <b>{slug}</b> revived in {html.escape(str(path))} — "
+            f"previous conversation restored.\n"
+            f"port {port} · auth {auth_mode} · now the active agent."
+        )
     return (
         f"🤖 agent <b>{slug}</b> spawned in {html.escape(str(path))}\n"
         f"port {port} · auth {auth_mode} · now the active agent.\n"
@@ -304,6 +323,36 @@ async def cmd_adopt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     msg = await _spawn(context.application, slug, path, "subscription")
+    await _reply(update, msg, parse_mode=ParseMode.HTML)
+
+
+async def cmd_revive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Respawn a killed/dead agent with its conversation restored: Claude Code
+    keeps transcripts per project dir, so `claude --continue` in the same
+    folder picks up where it left off. /revive <name> [path] — path is only
+    needed if the agent was fully /kill'ed AND doesn't live in PROJECTS_DIR."""
+    slug = _arg_slug(context)
+    if not slug:
+        await _reply(update, "usage: /revive <name> [path]")
+        return
+    agent = state.get_agent(slug)
+    if agent:  # row survived (DEAD status) — reuse everything we know
+        if await tmuxctl.has_session(agent["tmux_session"]):
+            await _reply(update, f"{slug} is already running — /switch {slug}")
+            return
+        path = Path(agent["local_path"])
+        port, auth_mode = agent["dev_port"], agent["auth_mode"]
+    else:      # /kill removed the row — recover from the path
+        path = Path(context.args[1]).resolve() if len(context.args) > 1 \
+            else config.PROJECTS_DIR / slug
+        port, auth_mode = None, "subscription"
+    if not path.is_dir():
+        await _reply(update, f"❌ no such directory: {path}\n"
+                             f"usage: /revive <name> <path>")
+        return
+    await _reply(update, f"🧟 reviving {slug} — restoring its last conversation…")
+    msg = await _spawn(context.application, slug, path, auth_mode,
+                       resume=True, port=port)
     await _reply(update, msg, parse_mode=ParseMode.HTML)
 
 
@@ -467,7 +516,8 @@ async def cmd_kill(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _reply(update, "usage: /kill <name>")
         return
     path = await _kill_agent(context.application, slug)
-    await _reply(update, f"💀 {slug} torn down (files kept in {path})")
+    await _reply(update, f"💀 {slug} torn down (files kept in {path} — "
+                         f"/revive {slug} brings it back with its memory)")
 
 
 async def cmd_killall(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -719,7 +769,8 @@ def register(app: Application) -> None:
     cmds = {
         "help": cmd_help, "start": cmd_help,
         "ls": cmd_ls, "mkdir": cmd_mkdir, "new": cmd_new,
-        "adopt": cmd_adopt, "restart": cmd_restart, "uptime": cmd_uptime,
+        "adopt": cmd_adopt, "revive": cmd_revive,
+        "restart": cmd_restart, "uptime": cmd_uptime,
         "list": cmd_list, "switch": cmd_switch, "status": cmd_status,
         "say": cmd_say, "port": cmd_port,
         "push": cmd_push, "deploy": cmd_deploy,

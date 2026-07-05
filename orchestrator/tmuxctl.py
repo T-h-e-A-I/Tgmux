@@ -31,12 +31,15 @@ async def new_session(name: str, cwd: str, env: Optional[dict[str, str]] = None)
     return rc == 0
 
 
-async def start_claude(name: str, extra_env: Optional[dict[str, str]] = None) -> None:
-    """Launch the interactive Claude Code REPL inside an existing session."""
+async def start_claude(name: str, extra_env: Optional[dict[str, str]] = None,
+                       resume: bool = False) -> None:
+    """Launch the interactive Claude Code REPL inside an existing session.
+    resume=True reopens the project's most recent conversation (--continue)."""
     prefix = ""
     for k, v in (extra_env or {}).items():
         prefix += f"{k}={v} "
-    await send_text(name, f"{prefix}{config.CLAUDE_BIN}")
+    cmd = config.CLAUDE_BIN + (" --continue" if resume else "")
+    await send_text(name, f"{prefix}{cmd}")
 
 
 async def send_text(name: str, text: str) -> None:

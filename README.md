@@ -63,6 +63,7 @@ Message your bot `/help` — if it answers, the bridge is up.
 | 🆕 `/mkdir <name>` | create a project folder |
 | ✨ `/new <name> [api]` | spawn an interactive Claude Code agent (add `api` to bill via `ANTHROPIC_API_KEY` instead of the subscription) |
 | 🔗 `/adopt <name> <path> [tmux-session]` | agent in an existing folder, or bridge an already-running tmux session |
+| 🧟 `/revive <name> [path]` | respawn a killed agent with its previous conversation (`claude --continue`) |
 | 📋 `/list` | agents + status (🛠 building · 🔶 waiting for you · 😴 idle · 💀 dead) |
 | 🎯 `/switch <name>` | route plain text to this agent |
 | 👀 `/status [name]` | current cleaned pane tail |
