@@ -1,0 +1,23 @@
+# Install:
+#   cp tgmux.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now tgmux
+#
+# Plan §9.5 says run under a dedicated non-root user. On a single-user VM
+# running as root, at least set User= below once you create that user.
+
+[Unit]
+Description=Tgmux — Telegram-controlled Claude Code orchestrator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/TelegramBot
+EnvironmentFile=/root/TelegramBot/.env
+ExecStart=/root/TelegramBot/.venv/bin/python -m orchestrator
+Restart=always
+RestartSec=5
+# User=orchestrator
+
+[Install]
+WantedBy=multi-user.target
