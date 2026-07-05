@@ -65,7 +65,7 @@ HELP_TEXT = """\
 💀 /killall — tear down ALL agents (confirm button)
 
 <b>🎛 Control</b>
-🔁 /mode [name] &lt;normal|auto|plan&gt; — set Claude Code mode directly (bare /mode cycles once)
+🔁 /mode [name] [normal|auto|plan] — set Claude Code mode; bare /mode shows tap buttons
 🛑 /esc [name] — interrupt the agent (Escape)
 ⌨️ /key &lt;name&gt; &lt;key&gt; — send a raw key (Enter, Up, Down, Tab, 1, C-c …)
 
@@ -542,9 +542,33 @@ def _mode_from_pane(raw: str) -> str:
     return "normal"
 
 
+async def _set_mode(sess: str, target: str) -> tuple[bool, str]:
+    """Shift+Tab until the status line shows `target`; max 4 steps covers the
+    normal → accept-edits → plan (→ bypass) cycle."""
+    cur = _mode_from_pane(await tmuxctl.capture(sess, lines=20))
+    for _ in range(4):
+        if cur == target:
+            return True, cur
+        await tmuxctl.send_key(sess, "BTab")
+        await asyncio.sleep(0.6)
+        cur = _mode_from_pane(await tmuxctl.capture(sess, lines=20))
+    return cur == target, cur
+
+
+MODE_LABELS = [("📝 Normal", "normal"), ("⚡ Auto", "auto"), ("📋 Plan", "plan")]
+
+
+def _mode_kb(slug: str, cur: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(("🔘 " if mode == cur else "") + label,
+                             callback_data=f"mode:{slug}:{mode}")
+        for label, mode in MODE_LABELS
+    ]])
+
+
 async def cmd_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/mode [name] [normal|auto|plan] — with a mode: press Shift+Tab until
-    that mode is active; without: cycle once and report where it landed."""
+    """/mode [name] [normal|auto|plan] — with a mode: jump straight to it;
+    without: show the current mode with a button per mode."""
     args = list(context.args or [])
     target = None
     if args and args[-1].lower() in MODE_ALIASES:
@@ -553,29 +577,21 @@ async def cmd_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     agent, _ = await _agent_for_key(update, context)
     if not agent:
         return
-    sess = agent["tmux_session"]
+    sess, slug = agent["tmux_session"], agent["slug"]
 
-    cur = _mode_from_pane(await tmuxctl.capture(sess, lines=20))
-    if target is None:  # bare /mode keeps the old cycle-once behavior
-        await tmuxctl.send_key(sess, "BTab")
-        await asyncio.sleep(0.6)
+    if target is None:
         cur = _mode_from_pane(await tmuxctl.capture(sess, lines=20))
-        await _reply(update, f"⇥ {agent['slug']}: mode is now {cur} — "
-                             f"/mode auto|plan|normal jumps directly")
+        await _reply(update, f"🔁 {slug}: current mode is {cur} — tap to set:",
+                     reply_markup=_mode_kb(slug, cur))
         return
 
-    for _ in range(4):  # cycle is 3-4 long depending on bypass availability
-        if cur == target:
-            break
-        await tmuxctl.send_key(sess, "BTab")
-        await asyncio.sleep(0.6)
-        cur = _mode_from_pane(await tmuxctl.capture(sess, lines=20))
-    if cur == target:
-        await _reply(update, f"✅ {agent['slug']}: mode set to {cur}")
+    ok, cur = await _set_mode(sess, target)
+    if ok:
+        await _reply(update, f"✅ {slug}: mode set to {cur}")
     else:
-        await _reply(update, f"⚠️ {agent['slug']}: couldn't reach '{target}' "
+        await _reply(update, f"⚠️ {slug}: couldn't reach '{target}' "
                              f"(stuck on {cur}) — a dialog may be open; /esc and retry")
-    state.audit("mode", cur, agent["slug"])
+    state.audit("mode", cur, slug)
 
 
 async def cmd_esc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -740,6 +756,26 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await context.application.bot.send_message(
                 config.OWNER_ID, f"🎯 active agent: {slug} — just type to talk to it",
                 disable_notification=True)
+        return
+
+    if data.startswith("mode:"):
+        _, slug, target = data.split(":", 2)
+        agent = state.get_agent(slug)
+        if not agent or not await tmuxctl.has_session(agent["tmux_session"]):
+            await context.application.bot.send_message(config.OWNER_ID, f"💀 {slug} is gone")
+            return
+        ok, cur = await _set_mode(agent["tmux_session"], target)
+        state.audit("mode", cur, slug)
+        try:  # refresh the 🔘 marker on the button row
+            await q.edit_message_text(f"🔁 {slug}: current mode is {cur} — tap to set:",
+                                      reply_markup=_mode_kb(slug, cur))
+        except Exception:
+            pass  # unchanged content — Telegram rejects no-op edits
+        if not ok:
+            await context.application.bot.send_message(
+                config.OWNER_ID,
+                f"⚠️ {slug}: couldn't reach '{target}' (stuck on {cur}) — "
+                f"a dialog may be open; /esc and retry")
         return
 
     if data.startswith("killq:"):  # from /list — ask before killing
