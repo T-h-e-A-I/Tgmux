@@ -74,6 +74,7 @@ Message your bot `/help` — if it answers, the bridge is up.
 | ⌨️ `/key <name> <key>` | send a raw key (Enter, Up, Down, Tab, 1, C-c …) |
 | 🌐 `/port <name>` | dev-server URL (`http://VM_IP:port`) |
 | 📤 `/push <name>` | commit + push `dev` (creates the GitHub repo if needed) → Vercel **preview** URL |
+| 🔀 `/merge <name> [src] [dst]` | git-only release: merge + push, no Vercel (default `dev` → `main`, confirm button) |
 | 🟢 `/deploy <name>` | confirm button → merge `dev`→`prod` → Vercel **production** |
 | 🗡 `/kill <name>` | tear down the tmux session (files kept) |
 | 💀 `/killall` | tear down ALL agents (confirm button) |

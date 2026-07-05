@@ -31,6 +31,7 @@ from . import bridge, config, gitops, ports, state, tmuxctl
 STARTED_AT = time.time()
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}$")
+BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,30}$")
 MAX_CHUNK = 3800
 
 CLAUDE_MD_TEMPLATE = """\
@@ -71,7 +72,8 @@ HELP_TEXT = """\
 <b>🚀 Ship</b>
 🌐 /port &lt;name&gt; — dev server URL
 📤 /push &lt;name&gt; — commit+push dev → Vercel preview
-🟢 /deploy &lt;name&gt; — merge dev→prod + production deploy (confirm button)
+🔀 /merge &lt;name&gt; [src] [dst] — merge + push, no Vercel (default dev → main, confirm button)
+🟢 /deploy &lt;name&gt; — merge dev→prod + Vercel production deploy (confirm button)
 
 <b>⚙️ Daemon</b>
 ♻️ /restart — restart the orchestrator daemon (agents survive)
@@ -550,6 +552,32 @@ async def cmd_killall(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                  reply_markup=kb)
 
 
+async def cmd_merge(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Git-only release for projects without Vercel: /merge <name> [src] [dst]
+    merges src into dst and pushes (defaults dev → main). /deploy stays the
+    Vercel path."""
+    slug = _arg_slug(context)
+    agent = state.get_agent(slug) if slug else None
+    if not agent:
+        await _reply(update, "usage: /merge <name> [src] [dst]   (default: dev → main)")
+        return
+    src = context.args[1] if len(context.args) > 1 else "dev"
+    dst = context.args[2] if len(context.args) > 2 else "main"
+    if not BRANCH_RE.match(src) or not BRANCH_RE.match(dst) or src == dst:
+        await _reply(update, "❌ bad branch names")
+        return
+    data = f"do_merge:{slug}:{src}:{dst}"
+    if len(data.encode()) > 64:  # Telegram callback-data cap
+        await _reply(update, "❌ name+branches too long for a confirm button")
+        return
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton(f"🔀 Merge {src} → {dst}", callback_data=data),
+        InlineKeyboardButton("Cancel", callback_data="dismiss"),
+    ]])
+    await _reply(update, f"<b>{slug}</b>: merge <code>{src}</code> → <code>{dst}</code> and push?",
+                 parse_mode=ParseMode.HTML, reply_markup=kb)
+
+
 async def cmd_push(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     slug = _arg_slug(context) or state.get_active()
     agent = state.get_agent(slug) if slug else None
@@ -611,6 +639,21 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 killed.append(a["slug"])
         await context.application.bot.send_message(
             config.OWNER_ID, f"💀 killed: {', '.join(killed) or 'nothing'}")
+        return
+
+    if data.startswith("do_merge:"):
+        _, slug, src, dst = data.split(":", 3)
+        agent = state.get_agent(slug)
+        await q.edit_message_reply_markup(None)
+        if not agent:
+            await context.application.bot.send_message(config.OWNER_ID, f"❌ unknown agent {slug}")
+            return
+        await context.application.bot.send_message(
+            config.OWNER_ID, f"🔀 {slug}: merging {src} → {dst}…")
+        ok, out = await gitops.merge_branches(slug, agent["local_path"], src, dst)
+        header = (f"✅ <b>{slug}</b> merged {src} → {dst}" if ok
+                  else f"❌ <b>{slug}</b> merge failed")
+        await send_pre(context.application, header, out)
         return
 
     if data.startswith("confirm_deploy:"):
@@ -792,7 +835,7 @@ def register(app: Application) -> None:
         "restart": cmd_restart, "uptime": cmd_uptime,
         "list": cmd_list, "switch": cmd_switch, "status": cmd_status,
         "say": cmd_say, "port": cmd_port,
-        "push": cmd_push, "deploy": cmd_deploy,
+        "push": cmd_push, "merge": cmd_merge, "deploy": cmd_deploy,
         "kill": cmd_kill, "killall": cmd_killall,
         "pause": cmd_pause, "resume": cmd_resume,
         "mode": cmd_mode, "esc": cmd_esc, "key": cmd_key,

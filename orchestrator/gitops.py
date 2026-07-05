@@ -118,6 +118,38 @@ async def vercel_preview(slug: str, path: str) -> tuple[bool, str]:
     return True, urls[-1]
 
 
+async def merge_branches(slug: str, path: str, src: str, dst: str) -> tuple[bool, str]:
+    """Git-only release for projects that don't deploy to Vercel:
+    merge src -> dst, push dst, return to src. Aborts cleanly on conflict."""
+    log: list[str] = []
+
+    rc, out = await _git(path, "rev-parse", "--verify", src)
+    if rc != 0:
+        return False, f"no branch '{src}':\n{out}"
+
+    rc, out = await _git(path, "checkout", dst)
+    if rc != 0:  # dst doesn't exist yet — branch it off src
+        await _git(path, "checkout", src)
+        rc, out = await _git(path, "checkout", "-b", dst)
+        if rc != 0:
+            return False, f"checkout {dst} failed:\n{out}"
+
+    rc, out = await _git(path, "merge", src, "--no-edit")
+    if rc != 0:
+        await _git(path, "merge", "--abort")
+        await _git(path, "checkout", src)
+        return False, f"merge {src} -> {dst} failed (aborted, back on {src}):\n{out}"
+    log.append(f"merged {src} -> {dst}")
+
+    rc, out = await _git(path, "push", "-u", "origin", dst, timeout=300)
+    log.append(f"pushed {dst}" if rc == 0 else f"push {dst} failed: {out[-300:]}")
+
+    await _git(path, "checkout", src)  # leave the agent back where it works
+
+    state.audit("merge", f"{src}->{dst}", slug)
+    return True, "\n".join(log)
+
+
 async def deploy_prod(slug: str, path: str) -> tuple[bool, str]:
     """Gate-approved: merge dev -> prod, push, production deploy (plan §6)."""
     log: list[str] = []
