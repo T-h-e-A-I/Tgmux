@@ -80,7 +80,7 @@ Message your bot `/help` — if it answers, the bridge is up.
 | ♻️ `/restart` | restart the daemon (agents survive in tmux) |
 | ⏱ `/uptime` | daemon uptime |
 
-Routing: plain text → active agent · `@name text` → that agent · replying to an agent's message → that agent. Any unrecognized `/command` (e.g. `/compact`, `/model`, custom skills) is passed through to the active agent. Attach a file/photo and it's saved to the project's `incoming/` dir; the caption becomes the instruction.
+Routing: plain text → active agent · `@name text` → that agent · replying to an agent's message → that agent. Any unrecognized `/command` (e.g. `/compact`, `/model`, custom skills) is passed through to the active agent. Attach a file/photo and it's saved to the project's `incoming/` dir (auto-added to the project's `.gitignore` — attachments are for the agent, never published); the caption becomes the instruction.
 
 ## How the bridge works
 

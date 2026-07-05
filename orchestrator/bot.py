@@ -86,6 +86,22 @@ Any other /command (e.g. /compact, /model, custom skills) is passed through to t
 
 # ---------- helpers ----------
 
+def _ensure_gitignored(project: Path, entry: str) -> None:
+    """Telegram file drops are for talking to the agent, not for publishing —
+    keep incoming/ out of every project's git history."""
+    gi = project / ".gitignore"
+    try:
+        lines = gi.read_text().splitlines() if gi.exists() else []
+        if entry.rstrip("/") in (l.strip().rstrip("/") for l in lines):
+            return
+        with gi.open("a") as f:
+            if lines and lines[-1].strip():
+                f.write("\n")
+            f.write(f"{entry}\n")
+    except OSError:
+        log.exception("could not update .gitignore in %s", project)
+
+
 def _relays(app: Application) -> dict:
     return app.bot_data.setdefault("relays", {})
 
@@ -701,6 +717,7 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     incoming = Path(agent["local_path"]) / "incoming"
     incoming.mkdir(exist_ok=True)
+    _ensure_gitignored(Path(agent["local_path"]), "incoming/")
     dest = incoming / name
     try:
         await tgfile.download_to_drive(custom_path=str(dest))
