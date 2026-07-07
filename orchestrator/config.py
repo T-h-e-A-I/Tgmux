@@ -30,6 +30,10 @@ LOG_DIR = Path(os.environ.get("LOG_DIR", str(ROOT / "logs")))
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
+# Vercel team slug — required in non-interactive mode when the account belongs
+# to more than one team, else the CLI aborts with "missing_scope".
+VERCEL_SCOPE = os.environ.get("VERCEL_SCOPE", "awesh-islams-projects")
+
 PORT_MIN = int(os.environ.get("PORT_MIN", "3001"))
 PORT_MAX = int(os.environ.get("PORT_MAX", "3099"))
 

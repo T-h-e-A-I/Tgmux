@@ -13,6 +13,15 @@ from . import config, state
 URL_RE = re.compile(r"https://[\w.-]+\.vercel\.app\S*")
 
 
+def _vercel(*args: str) -> list[str]:
+    """Vercel CLI invocation with the team scope pinned — without it the CLI
+    aborts in non-interactive mode when the account has multiple teams."""
+    cmd = ["vercel", *args, "--yes"]
+    if config.VERCEL_SCOPE:
+        cmd += ["--scope", config.VERCEL_SCOPE]
+    return cmd
+
+
 async def run(cmd: list[str], cwd: str, timeout: float = 600,
               stdin: Optional[str] = None) -> tuple[int, str]:
     proc = await asyncio.create_subprocess_exec(
@@ -107,7 +116,7 @@ def _extract_repo(gh_output: str) -> Optional[str]:
 
 async def vercel_preview(slug: str, path: str) -> tuple[bool, str]:
     """Create/refresh a preview deployment; return the preview URL."""
-    rc, out = await run(["vercel", "deploy", "--yes"], cwd=path, timeout=600)
+    rc, out = await run(_vercel("deploy"), cwd=path, timeout=600)
     if rc != 0:
         return False, f"vercel preview failed:\n{out[-1500:]}"
     urls = URL_RE.findall(out)
@@ -172,7 +181,7 @@ async def deploy_prod(slug: str, path: str) -> tuple[bool, str]:
 
     await _git(path, "checkout", "dev")  # leave the agent back on dev
 
-    rc, out = await run(["vercel", "--prod", "--yes"], cwd=path, timeout=900)
+    rc, out = await run(_vercel("--prod"), cwd=path, timeout=900)
     if rc != 0:
         return False, f"vercel --prod failed:\n{out[-1500:]}"
     urls = URL_RE.findall(out)
