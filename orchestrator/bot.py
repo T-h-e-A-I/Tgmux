@@ -26,12 +26,13 @@ from telegram.ext import (
     filters,
 )
 
-from . import bridge, config, gitops, ports, state, tmuxctl
+from . import bridge, cloudflare, config, gitops, ports, state, tmuxctl
 
 STARTED_AT = time.time()
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}$")
 BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,30}$")
+SUBDOMAIN_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 MAX_CHUNK = 3800
 
 CLAUDE_MD_TEMPLATE = """\
@@ -74,6 +75,7 @@ HELP_TEXT = """\
 📤 /push &lt;name&gt; — commit+push dev → Vercel preview
 🔀 /merge &lt;name&gt; [src] [dst] — merge + push, no Vercel (default dev → main, confirm button)
 🟢 /deploy &lt;name&gt; — merge dev→prod + Vercel production deploy (confirm button)
+🌍 /domain &lt;name&gt; [subdomain] — give it &lt;subdomain&gt;.DOMAIN_BASE (Vercel + Cloudflare DNS in one tap)
 
 <b>⚙️ Daemon</b>
 ♻️ /restart — restart the orchestrator daemon (agents survive)
@@ -702,6 +704,43 @@ async def cmd_deploy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                  reply_markup=kb)
 
 
+async def cmd_domain(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Give a project a subdomain in one shot: attach it to the Vercel project
+    AND create the Cloudflare CNAME. /domain <name> [subdomain]
+    (subdomain defaults to the project name)."""
+    slug = _arg_slug(context)
+    agent = state.get_agent(slug) if slug else None
+    if not agent:
+        await _reply(update, "usage: /domain <name> [subdomain]")
+        return
+    if not cloudflare.configured():
+        await _reply(update, "❌ set <code>CLOUDFLARE_API_TOKEN</code> and "
+                     "<code>DOMAIN_BASE</code> in .env first, then /restart",
+                     parse_mode=ParseMode.HTML)
+        return
+    sub = (context.args[1] if len(context.args) > 1 else slug).lower()
+    if not SUBDOMAIN_RE.match(sub):
+        await _reply(update, "❌ bad subdomain (letters, digits, hyphens)")
+        return
+    fqdn = f"{sub}.{config.DOMAIN_BASE}"
+    await _reply(update, f"⏳ wiring <code>{fqdn}</code> …", parse_mode=ParseMode.HTML)
+
+    ok, out = await gitops.attach_domain(slug, agent["local_path"], fqdn)
+    if not ok:
+        await send_pre(context.application, f"❌ <b>{slug}</b> Vercel domain failed", out)
+        return
+    ok, cf = await cloudflare.ensure_cname(sub, config.DOMAIN_BASE)
+    if not ok:
+        await send_pre(context.application,
+                       f"⚠️ <b>{slug}</b> attached in Vercel but DNS failed", cf)
+        return
+    state.audit("domain", fqdn, slug)
+    await _reply(update,
+                 f"✅ <b>{slug}</b> → https://{fqdn}\n<code>{cf}</code>\n"
+                 f"Vercel issues the TLS cert in a few minutes.",
+                 parse_mode=ParseMode.HTML)
+
+
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     q = update.callback_query
     if not q or update.effective_user.id != config.OWNER_ID:
@@ -992,6 +1031,7 @@ def register(app: Application) -> None:
         "list": cmd_list, "switch": cmd_switch, "status": cmd_status,
         "say": cmd_say, "port": cmd_port,
         "push": cmd_push, "merge": cmd_merge, "deploy": cmd_deploy,
+        "domain": cmd_domain,
         "kill": cmd_kill, "killall": cmd_killall,
         "pause": cmd_pause, "resume": cmd_resume,
         "mode": cmd_mode, "esc": cmd_esc, "key": cmd_key,

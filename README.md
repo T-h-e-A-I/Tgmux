@@ -24,7 +24,8 @@ On the VM (tested on Ubuntu 24.04, Python 3.12):
 - `tmux`
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — `claude` installed and logged in
 - [GitHub CLI](https://cli.github.com/) — `gh auth login` done (only needed for `/push`)
-- [Vercel CLI](https://vercel.com/docs/cli) — `vercel login` done (only needed for `/push`/`/deploy`)
+- [Vercel CLI](https://vercel.com/docs/cli) — `vercel login` done (only needed for `/push`/`/deploy`; set `VERCEL_SCOPE` in `.env` if your account has more than one team)
+- A Cloudflare API token (`Zone.DNS:Edit`, scoped to your zone) + `DOMAIN_BASE` in `.env` — only needed for `/domain`
 - `python3-venv` (`apt install python3.12-venv`)
 
 And from Telegram:
@@ -76,6 +77,7 @@ Message your bot `/help` — if it answers, the bridge is up.
 | 📤 `/push <name>` | commit + push `dev` (creates the GitHub repo if needed) → Vercel **preview** URL |
 | 🔀 `/merge <name> [src] [dst]` | git-only release: merge + push, no Vercel (default `dev` → `main`, confirm button) |
 | 🟢 `/deploy <name>` | confirm button → merge `dev`→`prod` → Vercel **production** |
+| 🌍 `/domain <name> [sub]` | give the project `<sub>.DOMAIN_BASE` — attaches it in Vercel **and** creates the Cloudflare CNAME (unproxied so the TLS cert issues); `sub` defaults to the project name |
 | 🗡 `/kill <name>` | tear down the tmux session (files kept) |
 | 💀 `/killall` | tear down ALL agents (confirm button) |
 | ♻️ `/restart` | restart the daemon (agents survive in tmux) |

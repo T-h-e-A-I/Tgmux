@@ -34,6 +34,12 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 # to more than one team, else the CLI aborts with "missing_scope".
 VERCEL_SCOPE = os.environ.get("VERCEL_SCOPE", "awesh-islams-projects")
 
+# Cloudflare-backed custom subdomains (/domain). DOMAIN_BASE is the zone apex
+# (e.g. example.com); each project gets <slug>.<DOMAIN_BASE>. The token needs
+# Zone.DNS:Edit on that one zone. Empty => /domain is disabled.
+CLOUDFLARE_API_TOKEN = os.environ.get("CLOUDFLARE_API_TOKEN", "")
+DOMAIN_BASE = os.environ.get("DOMAIN_BASE", "")
+
 PORT_MIN = int(os.environ.get("PORT_MIN", "3001"))
 PORT_MAX = int(os.environ.get("PORT_MAX", "3099"))
 

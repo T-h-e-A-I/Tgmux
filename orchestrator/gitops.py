@@ -13,13 +13,28 @@ from . import config, state
 URL_RE = re.compile(r"https://[\w.-]+\.vercel\.app\S*")
 
 
-def _vercel(*args: str) -> list[str]:
+def _vercel(*args: str, yes: bool = True) -> list[str]:
     """Vercel CLI invocation with the team scope pinned — without it the CLI
-    aborts in non-interactive mode when the account has multiple teams."""
-    cmd = ["vercel", *args, "--yes"]
+    aborts in non-interactive mode when the account has multiple teams.
+    yes=False for subcommands (e.g. `domains add`) that reject --yes."""
+    cmd = ["vercel", *args]
+    if yes:
+        cmd.append("--yes")
     if config.VERCEL_SCOPE:
         cmd += ["--scope", config.VERCEL_SCOPE]
     return cmd
+
+
+async def attach_domain(slug: str, path: str, fqdn: str) -> tuple[bool, str]:
+    """Attach a custom domain to the project's Vercel deployment. Idempotent:
+    treats an already-assigned domain as success."""
+    rc, out = await run(_vercel("domains", "add", fqdn, slug, yes=False),
+                        cwd=path, timeout=180)
+    low = out.lower()
+    if rc == 0 or "added" in low or "already" in low or "success" in low:
+        state.audit("attach_domain", fqdn, slug)
+        return True, fqdn
+    return False, f"vercel domains add failed:\n{out[-800:]}"
 
 
 async def run(cmd: list[str], cwd: str, timeout: float = 600,
