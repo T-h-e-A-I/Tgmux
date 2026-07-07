@@ -32,9 +32,12 @@ ANSI_RE = re.compile(
 NOISE_RES = [
     re.compile(r"^[\s╭╮╰╯─│┌┐└┘├┤┬┴┼═╔╗╚╝║>]+$"),
     re.compile(r"\?\s+for shortcuts"),
-    re.compile(r"esc to interrupt"),
+    re.compile(r"esc to interr"),                 # may be truncated ("esc to interr…")
     re.compile(r"ctrl\+[a-z] to"),
-    re.compile(r"auto-accept edits|bypass permissions|plan mode|shift\+tab"),
+    re.compile(r"auto mode on|auto-accept edits|bypass permissions|plan mode|shift\+tab"),
+    re.compile(r"^\s*[⏵⏸⏯]{2}\s"),                # Claude Code mode toolbar (⏵⏵ / ⏸⏸ prefix)
+    re.compile(r"·\s*\d+\s+shells?\b"),           # "· 1 shell" toolbar segment
+    re.compile(r"(←|→|⏎|↵)\s*for agents"),        # "← for agents" toolbar hint
     re.compile(r"^\s*[✳✻✽✶✢·∗＊*+]\s+\S+…"),                 # spinner lines
     re.compile(r"^\s*[✳✻✽✶✢·∗＊*+]\s+(Thinking|Running|Wibbling)", re.I),
     re.compile(r"^\s*[✳✻✽✶✢·∗＊*+]\s+\w+ for \d"),           # "✻ Worked for 7s"

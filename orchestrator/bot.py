@@ -535,7 +535,9 @@ MODE_ALIASES = {
 def _mode_from_pane(raw: str) -> str:
     """Read the active mode off Claude Code's status line (bottom of pane)."""
     tail = " ".join(l for l in raw.splitlines() if l.strip())[-400:].lower()
-    if "accept edits on" in tail:
+    # Claude Code's status-line wording varies by version: older builds say
+    # "accept edits on", newer ones "auto mode on". Accept both.
+    if "auto mode on" in tail or "accept edits on" in tail:
         return "auto"
     if "plan mode on" in tail:
         return "plan"
